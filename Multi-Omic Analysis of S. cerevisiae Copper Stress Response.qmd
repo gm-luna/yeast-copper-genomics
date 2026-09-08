@@ -1,0 +1,304 @@
+---
+title: "Multi-Omic Analysis of S. cerevisiae Copper Stress Response"
+format: gfm
+execute:
+  eval: false
+  echo: true
+  warning: false
+  message: false
+editor: visual
+---
+
+# Methodological Overview
+
+This document outlines the downstream statistical workflow for quantifying gene expression across target loci (*CUP1*, *CRS5*, *CTR1*, *SOD1*, and *HSP12*) in copper-stressed *Saccharomyces cerevisiae* isolates.
+
+To manage locus-level constraints while preserving statistical accuracy, this pipeline bypasses full genome-wide differential expression models (e.g., `DESeq2` Wald tests) in favor of **linear regression modeling**, **zero-variance filtering**, **Principal Component Analysis (PCA)**, and **unsupervised hierarchical clustering (`pheatmap`)**.
+
+## Key Technical & Methodological Safeguards:
+
+- **Dimensionality Preservation:** Matrix subscript guards (`drop = FALSE`) are added across all subsetting steps to prevent 1D vector collapse when isolating single samples or genes.
+
+- **Automated Variance Pre-Filtering:** Genes exhibiting zero variance across target strains (*SOD1*, *HSP12*, and *CTR1*) are dynamically detected and excluded prior to row scaling in `pheatmap` and unit-variance scaling in `prcomp(scale. = TRUE)` to prevent divide-by-zero errors.
+
+- **Differentiator Analysis:** Dimensionality reduction and biplots prioritize high-variance loci (*CUP1* vs *CRS5*), isolating the primary genomic drivers of phenotypic growth under 10 mM $\text{CuSO}_4$ stress.
+
+## Pipeline Implementation
+
+### 1. Environment Setup & Dependency Loading
+
+``` r
+#| label: setup-dependencies
+suppressPackageStartupMessages({
+  library(tidyverse)
+  library(pheatmap)
+  library(ggfortify)
+  library(RColorBrewer)
+  library(data.table)
+})
+
+# Ensure output directory exists for figure exports
+if (!dir.exists("outputs")) {
+  dir.create("outputs", recursive = TRUE)
+}
+```
+
+### 2. File Path Configuration & Data Ingestion
+
+``` r
+#| label: data-ingestion
+# 2. Define File Paths & Load Sample Metadata
+
+# Define input files
+count_files <- c(
+  "data/counts/Y12_counts.txt",
+  "data/counts/YJM1389_counts.txt",
+  "data/counts/YPS128_counts.txt",
+  "data/counts/YPS163_counts.txt"
+)
+
+# Paths for large matrix files 
+cnv_path <- "data/matrices/genesMatrix_CopyNumber.tab"
+pheno_path <- "data/matrices/pheno_35Conditions_NormalizedByYPD.txt"
+
+# Load Phenotype Matrix
+pheno <- read.table(pheno_path, header = TRUE, row.names = 1, sep = "\t", check.names = FALSE)
+
+# Load Genes (Copy Number) Matrix
+genesMatrix <- read.table(cnv_path, header = TRUE, row.names = 1, sep = "\t", check.names = FALSE)
+
+# Build Count_matrix from individual files - Read files into a list
+raw_counts_list <- lapply(count_files, function(x) {
+  read.table(x, header = TRUE, row.names = 1, sep = "\t")
+})
+
+# Combine into one matrix
+Count_matrix <- do.call(cbind, raw_counts_list)
+
+# Mapping Based on input:
+# File 1 (Y12) is ACK
+# File 2 (YJM1389) is SACE_YCK
+# File 3 (YPS128) is AKN
+# File 4 (YPS163) is AVI
+colnames(Count_matrix) <- c("ACK", "SACE_YCK", "AKN", "AVI")
+```
+
+### 3. Data Filtering, Subsetting & Master Dataset Merging
+
+``` r
+#| label: filtering-merging
+# Define the master list of samples to keep
+target_samples <- c("ACK", "SACE_YCK", "AKN", "AVI")
+
+# Define the Gene Columns (Headers from genesMatrix)
+gene_cols_long <- c(
+  "X3978.YGR078C", 
+  "X5010.YJR104C", 
+  "X3259.YEL024W", 
+  "X6910.YOL112W", 
+  "X6999.YOR031W")
+
+# Define the Phenotype Column
+pheno_col <- "YPDCUSO410MM"
+
+# Subset for our four samples and the copper column
+clean_pheno <- pheno[target_samples,pheno_col, drop = FALSE]
+colnames(clean_pheno) <- "Copper_Growth"
+
+# Subset for four samples and five gene columns
+clean_genes <- genesMatrix[target_samples,gene_cols_long]
+
+# Rename columns to common names for clarity
+# Assume order: YGR078C, YJR104C, YEL024W, YOL112W, YOR031W based on matrix reference
+colnames(clean_genes) <- c("CUP1", "SOD1", "HSP12", "CTR1", "CRS5")
+
+# Select the columns for samples
+clean_counts <- Count_matrix[,target_samples, drop = FALSE]
+
+# Filter rows for the specific gene IDs with subscript guard
+short_ids <- c("YGR078C", "YJR104C", "YEL024W", "YOL112W", "YOR031W")
+valid_ids <- intersect(short_ids, rownames(clean_counts))
+clean_counts_subset <- clean_counts[valid_ids, , drop = FALSE]
+
+# Transpose so that the samples are the rows
+clean_counts_trans <- t(clean_counts_subset)
+
+# Map gene names to raw count headers
+gene_map <- c("YGR078C" = "CUP1", "YJR104C" = "SOD1", "YEL024W" = "HSP12", "YOL112W" = "CTR1", "YOR031W" = "CRS5")
+mapped_names <- gene_map[colnames(clean_counts_trans)]
+mapped_names[is.na(mapped_names)] <- colnames(clean_counts_trans)[is.na(mapped_names)] # Fallback
+colnames(clean_counts_trans) <- paste0(mapped_names, "_raw")
+
+# Merge Phenotype and Normalized Genes
+master_df <- merge(clean_pheno, clean_genes, by = "row.names")
+
+# Fix row names
+rownames(master_df) <- master_df$Row.names
+master_df$Row.names <- NULL
+
+# Merge in the Raw counts
+master_df <- merge(master_df, clean_counts_trans, by = "row.names")
+rownames(master_df) <- master_df$Row.names
+master_df$Row.names <- NULL
+
+print("Master Dataframe:")
+print(master_df)
+```
+
+### 4. Exploratory Visualization & Linear Regression Modeling
+
+``` r
+plot_data <- master_df[, c("Copper_Growth", "CUP1", "SOD1", "HSP12", "CTR1", "CRS5")]
+plot_data$Sample <- rownames(plot_data)
+
+# Convert to longer format
+long_df <- pivot_longer(
+  plot_data,
+  cols = c("CUP1", "SOD1", "HSP12", "CTR1", "CRS5"),
+  names_to = "Gene",
+  values_to = "Expression"
+)
+
+# Scatter Plot: Gene Expression vs Growth Correlation
+p1_GEvGC <- ggplot(long_df, aes(x = Expression, y = Copper_Growth)) +
+  geom_point(aes(color = Sample), size = 4) +
+  geom_smooth(method = "lm", se = FALSE, color = "grey", linetype = "dashed") +
+  geom_text(aes(label = Sample), vjust = -1, size = 3) +
+  facet_wrap(~Gene, scales = "free_x") +
+  theme_bw() +
+  labs(
+    title = "Correlation: Gene Expression vs Copper Growth",
+    y = "Copper Resistance (Growth)",
+    x = "Normalized Gene Expression"
+  )
+
+print(p1_GEvGC)
+ggsave("outputs/gene_expression_growth_correlation.png", plot = p1_GEvGC, width = 8, height = 6)
+
+# Bar Plot: Gene Expression Profiles by Strain
+p2_GEbS <- ggplot(long_df, aes(x = Sample, y = Expression, fill = Gene)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_minimal() +
+  labs(
+    title = "Gene Expression Profiles by Strain",
+    y = "Normalized Copy Number / Expression",
+    x = "Strain"
+  ) +
+  scale_fill_brewer(palette = "Set2")
+print(p2_GEbS)
+ggsave("outputs/expression_profiles_by_strain.png", plot = p2_GEbS, width = 7, height = 5)
+
+# Bar Plot: Copper Resistance Ranking
+p3_CRR <- ggplot(plot_data, aes(x = reorder(Sample, -Copper_Growth), y = Copper_Growth)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  theme_classic() +
+  labs(
+    title = "Copper Resistance by Strain",
+    x = "Strain",
+    y = "Growth in 10mM CuSO4"
+  )
+print(p3_CRR)
+ggsave("outputs/copper_resistance_ranking.png", plot = p3_CRR, width = 6, height = 4)
+```
+
+### 5. Variance Filtering & Hierarchical Clustering
+
+``` r
+# Extract the numeric matrix for the 5 genes
+heatmap_data <- t(master_df[, c("CUP1", "SOD1", "HSP12", "CTR1", "CRS5")])
+
+# Check for NAs and replace them with 0 if found
+heatmap_data[is.na(heatmap_data)] <- 0
+
+# Check for Zero Variance Rows
+gene_variances <- apply(heatmap_data, 1, var)
+flat_genes <- gene_variances == 0
+
+# If any exist, remove them
+if (any(flat_genes)) {
+  print(paste("Removing constant genes:", paste(names(which(flat_genes)), collapse = ", ")))
+  heatmap_data <- heatmap_data[!flat_genes, , drop = FALSE]
+}
+
+annotation_col <- data.frame(Growth = master_df$Copper_Growth)
+rownames(annotation_col) <- colnames(heatmap_data)
+
+png("outputs/gene_expression_heatmap.png", width = 800, height = 600, res = 120)
+pheatmap(
+  heatmap_data,
+  cluster_rows = TRUE,
+  cluster_cols = TRUE,
+  scale = "row",
+  annotation_col = annotation_col,
+  main = "Gene Expression Heatmap",
+  display_numbers = TRUE,
+  color = colorRampPalette(c("navy", "white", "darkred"))(50)
+)
+dev.off()
+```
+
+### 6. Principal Component Analysis (PCA) & Ordination
+
+``` r
+pca_data <- master_df[, c("CUP1", "SOD1", "HSP12", "CTR1", "CRS5")]
+
+# Calculate variance for each column
+variances <- apply(pca_data, 2, var)
+constant_genes <- names(variances[variances == 0])
+
+if (length(constant_genes) > 0) {
+  print(paste("Removing constant genes:", paste(constant_genes, collapse = ", ")))
+  pca_data_clean <- pca_data[, variances != 0, drop = FALSE]
+} else {
+  pca_data_clean <- pca_data
+}
+
+# Perform PCA
+pca_result <- prcomp(pca_data_clean, scale. = TRUE)
+
+# Format subtitle to handle gene exclusions
+sub_text <- if (length(constant_genes) > 0) {
+  paste("Excluded constant genes:", paste(constant_genes, collapse = ", "))
+} else {
+  "All 5 genes included"
+}
+
+p4_PCA <- autoplot(
+  pca_result,
+  data = master_df,
+  colour = "Copper_Growth",
+  size = 5,
+  loadings = TRUE,
+  loadings.label = TRUE,
+  loadings.label.size = 5
+) +
+  theme_minimal() +
+  scale_color_gradient(low = "blue", high = "red") +
+  geom_text(aes(label = rownames(master_df)), vjust = -1) +
+  labs(
+    title = "PCA of Copper Stress Strategies",
+    subtitle = sub_text
+  )
+# Focal analysis on variable loci (CUP1, CRS5) after filtering constant genes
+print(p4_PCA)
+ggsave("outputs/pca_copper_stress_strategies.png", plot = p4_PCA, width = 7, height = 5)
+```
+
+### 7. Focal Differentiator Analysis (CUP1 vs CRS5)
+
+``` r
+p5_DA <- ggplot(master_df, aes(x = CUP1, y = CRS5)) +
+  geom_point(aes(color = Copper_Growth, size = Copper_Growth)) +
+  geom_text(aes(label = rownames(master_df)), vjust = -1) +
+  geom_smooth(method = "lm", se = FALSE, color = "grey", linetype = "dashed") +
+  scale_color_gradient(low = "blue", high = "red") +
+  theme_classic() +
+  labs(
+    title = "Differentiators: CUP1 vs CRS5",
+    subtitle = "SOD1, HSP12, and CTR1 showed no variation between strains",
+    x = "CUP1 Expression",
+    y = "CRS5 Expression"
+  )
+print(p5_DA)
+ggsave("outputs/differentiators_cup1_vs_crs5.png", plot = p5_DA, width = 7, height = 5)
+```
