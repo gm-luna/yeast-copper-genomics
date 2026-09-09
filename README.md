@@ -8,7 +8,7 @@ By synthesizing high-throughput RNA-seq data, CNV matrices, and phenotypic fitne
 
 ### Upstream HPC & Alignment Pipeline
 - **Bash / Slurm:** Command-line automation and cluster execution
-- **SRA Toolkit (`fasterq-dump`):** High-throughput FASTQ extraction
+- **SRA Toolkit (`fastq-dump`):** High-throughput FASTQ extraction
 - **Trim Galore / Cutadapt:** Quality trimming (Phred > 20, length > 36bp) and adapter removal
 - **STAR Aligner:** Fast RNA-seq spliced alignment to the *S. cerevisiae* S288C reference genome
 - **Subread (`featureCounts`):** Genomic feature quantification mapping reads to CDS regions
