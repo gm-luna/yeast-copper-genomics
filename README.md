@@ -45,6 +45,7 @@ Sourced from the Yeast 1000 Genomes Project:
 ## Bioinformatic Pipeline
 
 ### Phase 1: High-Performance Computing Pipeline (UNIX / HPC Cluster)
+**Note: Raw FASTQ extraction, quality trimming, alignment, and quantification were executed on an institutional Slurm cluster. The resulting count matrices are ingested directly by the downstream R environment.**
 Raw FASTQ (SRA) ──► Trim Galore (Phred > 20, >36bp) ──► STAR Alignment (S288C) ──► featureCounts (CDS)
 
 ### Phase 2: Statistical Modeling & Visualization (R / Bioconductor)
