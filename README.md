@@ -38,7 +38,7 @@ Raw single-end RNA-sequencing accessions retrieved via SRA Toolkit:
 - **YPS163 (AVI):** `SRR14156784` - `SRR14156792`
 
 ### 2. Pangenomic & Phenotypic Matrices
-Sourced from the Yeast 1000 Genomes Project:
+Sourced from the Yeast 1002 Genomes Project:
 - **CNV Data:** `genesMatrix_CopyNumber.tab` (ORFs: *CUP1* [`YGR078C-A`], *CRS5* [`YOR031W`], *CTR1* [`YOL112W`], *SOD1* [`YJR104C`], *HSP12* [`YEL024W`])
 - **Phenotype Matrix:** `pheno_35Conditions_NormalizedByYPD.txt` (Condition: 10 mM $\text{CuSO}_4$ growth ratio relative to YPD at 30°C)
 
