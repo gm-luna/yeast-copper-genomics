@@ -24,7 +24,7 @@ By synthesizing high-throughput RNA-seq data, CNV matrices, and phenotypic fitne
 ## Key Findings
 
 - **Primary Fitness Drivers:** Differential expression of metallothioneins (*CUP1* and *CRS5*) account for ~78.87% of the total biological variance (PC1) across strains.
-- **Conservation of Effectors:** Expression of *CTR1*, *HSP12*, and *SOD1* exhibited near-zero variance across strains (normalized expression ~1.0), indicating that basal transport and general oxidative mechanisms are highly conserved.
+- **Methodological Constraints & Secondary Loci:** Secondary targets (*CTR1*, *HSP12*, and *SOD1*) yielded uniform baseline counts (~1.0), reflecting a combined result of basal homeostatic maintenance and feature quantification constraints under paired-end parameter matching (`-p`) applied to single-end reads.
 - **Strain Clustering:** Row-scaled hierarchical clustering separated isolates into a high-tolerance (**ACK / Y12** and **AKN / YPS128**) and low-tolerance (**SACE_YCK / YJM1389** and **AVI / YPS163**) phenotypic groups.
 - **Secondary Regulatory Pathways:** Despite near-identical metallothionein expression levels, strain **ACK** achieved significantly higher growth in 10 mM $\text{CuSO}_4$ (1.1) compared to **AKN** (0.2), pointing to auxiliary metabolic or regulatory factors contributing to peak fitness under severe toxicity.
 
